@@ -1,0 +1,3 @@
+* age-chat
+
+A PoC implementation of a chat program with E2E age encryption.
