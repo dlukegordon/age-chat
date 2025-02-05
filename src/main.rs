@@ -3,8 +3,7 @@ use clap::{Parser, Subcommand};
 
 mod server;
 
-const DEFAULT_HOST: &str = "127.0.0.1";
-const DEFAULT_PORT: &str = "42069";
+const DEFAULT_ADDRESS: &str = "127.0.0.1:42069";
 
 #[derive(Parser)]
 struct Cli {
@@ -20,25 +19,15 @@ enum Subcommands {
 
 #[derive(Parser)]
 struct CommonArgs {
-    /// Host to connect to
-    #[clap(short = 'H', long = "host", default_value = DEFAULT_HOST)]
-    host: String,
-
-    /// Port to connect to
-    #[clap(short = 'p', long = "port", default_value = DEFAULT_PORT)]
-    port: String,
+    /// Address to connect to formatted as <host>:<port>
+    #[clap(default_value = DEFAULT_ADDRESS)]
+    address: String,
 }
 
 #[derive(Parser)]
 struct ServeArgs {
     #[command(flatten)]
     common: CommonArgs,
-}
-
-impl CommonArgs {
-    fn address(self) -> String {
-        format!("{}:{}", self.host, self.port)
-    }
 }
 
 impl Cli {

@@ -7,7 +7,7 @@ use tracing::{error, info};
 use crate::ServeArgs;
 
 pub async fn run(args: ServeArgs) -> Result<()> {
-    let addr = args.common.address();
+    let addr = args.common.address;
     let listener = TcpListener::bind(&addr).await?;
     info!("Server listening on {addr}");
 
