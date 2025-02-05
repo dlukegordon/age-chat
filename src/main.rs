@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod common;
 mod server;
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:42069";
