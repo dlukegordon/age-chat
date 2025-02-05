@@ -1,25 +1,55 @@
 use anyhow::Result;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-};
-use tracing::info;
+use futures_util::{SinkExt, StreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{accept_async, WebSocketStream};
+use tracing::{error, info};
 
 use crate::ServeArgs;
 
 pub async fn run(args: ServeArgs) -> Result<()> {
-    let address = args.common.address();
-    let server = TcpListener::bind(&address).await?;
-    info!("Server listening on {address}");
+    let addr = args.common.address();
+    let listener = TcpListener::bind(&addr).await?;
+    info!("Server listening on {addr}");
 
-    let (mut tcp, _addr) = server.accept().await?;
-    let mut buffer = [0u8; 16];
     loop {
-        let n = tcp.read(&mut buffer).await?;
-        if n == 0 {
-            break;
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                tokio::spawn(async move {
+                    let res = serve_tcp_connection(stream).await;
+                    if let Err(e) = res {
+                        error!("Error serving tcp connection: {e}");
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Error accepting tcp connection: {e}");
+                break;
+            }
         }
-        let _ = tcp.write(&buffer[..n]).await?;
+    }
+
+    Ok(())
+}
+
+async fn serve_tcp_connection(tcp_stream: TcpStream) -> Result<()> {
+    let peer_addr = tcp_stream.peer_addr()?;
+    let ws_stream = accept_async(tcp_stream).await?;
+    info!("Connected: {peer_addr}");
+
+    let res = serve_ws_connection(ws_stream).await;
+    if let Err(e) = res {
+        error!("Error serving ws connection {peer_addr}: {e}");
+    }
+
+    info!("Disconnected: {peer_addr}");
+    Ok(())
+}
+
+async fn serve_ws_connection(ws_stream: WebSocketStream<TcpStream>) -> Result<()> {
+    let (mut write, mut read) = ws_stream.split();
+
+    while let Some(msg) = read.next().await {
+        write.send(msg?).await?;
     }
 
     Ok(())
