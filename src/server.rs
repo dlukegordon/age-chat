@@ -1,7 +1,7 @@
-use std::net::SocketAddr;
-
 use anyhow::Result;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
+use std::net::SocketAddr;
+use std::str::FromStr;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
@@ -13,7 +13,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::ServerArgs;
+use crate::{common::ClientWsMsg, ServerArgs};
 
 /// Entrance point to server from cli
 pub async fn run(args: ServerArgs) -> Result<()> {
@@ -81,18 +81,30 @@ where
 
         info!("📥 Received WS message from {peer_addr}: {ws_msg:?}");
         match ws_msg {
-            Message::Text(_payload) => {}
-
-            Message::Binary(_payload) => {
-                error!("Server does not support binary messages");
+            Message::Text(payload) => {
+                let res = handle_client_text_msg(peer_addr, payload).await;
+                if let Err(e) = res {
+                    error!("Error handling client WS message from {peer_addr}: {e}");
+                }
             }
 
-            Message::Frame(_frame) => {
-                error!("Server does not support frame messages");
-            }
+            Message::Binary(_payload) => error!("Server does not support binary messages"),
+            Message::Frame(_frame) => error!("Server does not support frame messages"),
 
             // tokio_tungstenite automatically handles close handshakes and ping/pong
             _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_client_text_msg(peer_addr: SocketAddr, payload: Utf8Bytes) -> Result<()> {
+    let msg = ClientWsMsg::from_str(&payload)?;
+
+    match msg {
+        ClientWsMsg::SendNewNote(note) => {
+            info!("✉️ Client {peer_addr} sent new note:\n{note:?}");
         }
     }
 
