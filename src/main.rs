@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod client;
 mod common;
 mod server;
 
@@ -15,7 +16,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Subcommands {
     /// Run the chat server
-    Serve(ServeArgs),
+    Serve(ServerArgs),
+    /// Run the chat server
+    Connect(ClientArgs),
 }
 
 #[derive(Parser)]
@@ -26,7 +29,13 @@ struct CommonArgs {
 }
 
 #[derive(Parser)]
-struct ServeArgs {
+struct ServerArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+}
+
+#[derive(Parser)]
+struct ClientArgs {
     #[command(flatten)]
     common: CommonArgs,
 }
@@ -35,6 +44,7 @@ impl Cli {
     async fn run(self) -> Result<()> {
         match self.command {
             Subcommands::Serve(args) => server::run(args).await?,
+            Subcommands::Connect(args) => client::run(args).await?,
         }
         Ok(())
     }
