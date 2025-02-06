@@ -73,7 +73,7 @@ where
             }
         };
 
-        info!("📥 Received WS message from {peer_addr}: {ws_msg:?}");
+        info!("Received WS message from {peer_addr}: {ws_msg:?}");
         match ws_msg {
             Message::Text(payload) => {
                 let res = handle_client_text_msg(socket, peer_addr, payload).await;
@@ -102,6 +102,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let msg = ClientMsg::from_str(&payload)?;
+    info!("📥 Received message from {peer_addr}: {msg}");
 
     match msg {
         ClientMsg::SendNewNote(note) => {
