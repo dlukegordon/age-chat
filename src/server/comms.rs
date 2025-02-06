@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tokio::{
@@ -13,7 +13,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::common::ClientWsMsg;
+use crate::common::{ClientMsg, ServerMsg};
 
 /// Run the server
 pub async fn serve(addr: &str) -> Result<()> {
@@ -76,7 +76,7 @@ where
         info!("📥 Received WS message from {peer_addr}: {ws_msg:?}");
         match ws_msg {
             Message::Text(payload) => {
-                let res = handle_client_text_msg(peer_addr, payload).await;
+                let res = handle_client_text_msg(socket, peer_addr, payload).await;
                 if let Err(e) = res {
                     error!("Error handling client WS message from {peer_addr}: {e}");
                 }
@@ -93,12 +93,22 @@ where
     Ok(())
 }
 
-async fn handle_client_text_msg(peer_addr: SocketAddr, payload: Utf8Bytes) -> Result<()> {
-    let msg = ClientWsMsg::from_str(&payload)?;
+async fn handle_client_text_msg<T>(
+    socket: &mut WebSocketStream<T>,
+    peer_addr: SocketAddr,
+    payload: Utf8Bytes,
+) -> Result<()>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    let msg = ClientMsg::from_str(&payload)?;
 
     match msg {
-        ClientWsMsg::SendNewNote(note) => {
-            info!("✉️ Client {peer_addr} sent new note:\n{note:?}");
+        ClientMsg::SendNewNote(note) => {
+            info!("✉️ Client {peer_addr} sent new note, echoing back:\n{note:?}");
+            socket
+                .send(ServerMsg::rec_new_note(note.content).to_ws_msg())
+                .await?;
         }
     }
 
