@@ -1,9 +1,9 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-
 mod client;
 mod common;
 mod server;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:42069";
 

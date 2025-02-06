@@ -4,17 +4,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use tracing::{error, info};
 
-use crate::ClientArgs;
-
-/// Entrance point to client from cli
-pub async fn run(args: ClientArgs) -> Result<()> {
-    // connect_async requires the protocol prefix
-    let addr = format!("ws://{}", args.common.address);
-    talk_server(&addr).await?;
-
-    Ok(())
-}
-
 pub async fn talk_server(addr: &str) -> Result<()> {
     // Open connection to server
     let (mut socket, _) = match connect_async(addr).await {
@@ -27,6 +16,7 @@ pub async fn talk_server(addr: &str) -> Result<()> {
     };
     info!("🔗 Connected to server: {addr}");
 
+    // Talk to the server over the socket
     let res = talk_server_socket(&mut socket).await;
     if let Err(e) = res {
         error!("Error talking to the server {addr} over the WS connection: {e}");

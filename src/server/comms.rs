@@ -13,13 +13,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::{common::ClientWsMsg, ServerArgs};
-
-/// Entrance point to server from cli
-pub async fn run(args: ServerArgs) -> Result<()> {
-    serve(&args.common.address).await?;
-    Ok(())
-}
+use crate::common::ClientWsMsg;
 
 /// Run the server
 pub async fn serve(addr: &str) -> Result<()> {
