@@ -114,20 +114,11 @@ impl<'a> App<'a> {
     }
 
     fn draw(&self, frame: &mut Frame) {
+        let true_black = Color::Rgb(0, 0, 0);
+        let true_white = Color::Rgb(255, 255, 255);
+
         let vertical = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]);
         let [notes_area, input_area] = vertical.areas(frame.area());
-
-        let input = Paragraph::new(self.input.as_str())
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::bordered().title("Input"));
-        frame.render_widget(input, input_area);
-        frame.set_cursor_position(Position::new(
-            // Draw the cursor at the current position in the input field.
-            // This position is can be controlled via the left and right arrow key
-            input_area.x + self.character_index as u16 + 1,
-            // Move one line down, from the border to the input line
-            input_area.y + 1,
-        ));
 
         let notes: Vec<ListItem> = self
             .notes
@@ -137,8 +128,20 @@ impl<'a> App<'a> {
                 ListItem::new(content)
             })
             .collect();
-        let notes = List::new(notes).block(Block::bordered().title("Messages"));
+        let notes = List::new(notes)
+            .style(Style::default().fg(true_white).bg(true_black))
+            .block(Block::bordered().title("Messages"));
         frame.render_widget(notes, notes_area);
+
+        let input = Paragraph::new(self.input.as_str())
+            .style(Style::default().fg(true_white).bg(true_black))
+            .block(Block::bordered().title("Input"));
+        frame.render_widget(input, input_area);
+
+        frame.set_cursor_position(Position::new(
+            input_area.x + self.character_index as u16 + 1,
+            input_area.y + 1,
+        ));
     }
 
     fn render_note(&self, note: &Note) -> String {
