@@ -20,8 +20,9 @@ pub struct Comms {
 }
 
 impl Comms {
-    /// Connect to the server and start the background server communication task.
-    /// Will not finish awaiting until the server is connected.
+    /// Connect to the server and start the background server communication task. This will allow
+    /// us to communicate with the server through channels. Will not finish awaiting until the server
+    /// is connected.
     pub async fn run(addr: String) -> Result<Self> {
         // Channel to send messages to server
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<ClientMsg>(CHANNEL_BUFFER_SIZE);
@@ -68,6 +69,16 @@ impl Comms {
             .ok_or(anyhow!("Incoming message channel is closed"))
     }
 
+    /// Send a message to the server without blocking
+    pub fn try_send_message(&self, message: ClientMsg) -> Result<()> {
+        Ok(self.outgoing_tx.try_send(message)?)
+    }
+
+    /// Receive a message from the server without blocking
+    pub fn try_receive_message(&mut self) -> Result<ServerMsg> {
+        Ok(self.incoming_rx.try_recv()?)
+    }
+
     /// Wait for the communication task to end
     pub async fn wait_shutdown(self) -> Result<()> {
         self.task_handle.await?;
@@ -75,7 +86,8 @@ impl Comms {
     }
 }
 
-/// Talk to the server over the websocket connection
+/// Talk to the server over the websocket connection, simultaneously sending messages from the
+/// outgoing channel and putting received messages into the incoming channel.
 async fn talk_server_socket<T>(
     outgoing_rx: &mut Receiver<ClientMsg>,
     incoming_tx: Sender<ServerMsg>,

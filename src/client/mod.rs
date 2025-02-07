@@ -9,9 +9,8 @@ use crate::ClientArgs;
 
 /// Entrance point to client from cli
 pub async fn run(args: ClientArgs) -> Result<()> {
-    info!("🏁 Client started");
-
     // Start communication with server
+    info!("🏁 Client started");
     let addr = format!("ws://{}", args.common.address);
     let mut comms = Comms::run(addr).await?;
 
