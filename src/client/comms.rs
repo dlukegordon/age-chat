@@ -1,10 +1,14 @@
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use std::str::FromStr;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::signal;
-use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync::{
+        broadcast,
+        mpsc::{self, Receiver, Sender},
+    },
+    task::JoinHandle,
+};
 use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use tracing::{error, info};
 
@@ -23,7 +27,11 @@ impl Comms {
     /// Connect to the server and start the background server communication task. This will allow
     /// us to communicate with the server through channels. Will not finish awaiting until the server
     /// is connected.
-    pub async fn run(addr: String) -> Result<Self> {
+    pub async fn run(
+        addr: String,
+        shutdown_tx: broadcast::Sender<()>,
+        shutdown_rx: broadcast::Receiver<()>,
+    ) -> Result<Self> {
         // Channel to send messages to server
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<ClientMsg>(CHANNEL_BUFFER_SIZE);
         // Channel to receive messages from server
@@ -38,7 +46,14 @@ impl Comms {
         // Start the background server communication task
         let task_handle = tokio::spawn(async move {
             // Talk to the server over the socket
-            let res = talk_server_socket(&mut outgoing_rx, incoming_tx, &mut socket).await;
+            let res = talk_server_socket(
+                &mut outgoing_rx,
+                incoming_tx,
+                shutdown_tx,
+                shutdown_rx,
+                &mut socket,
+            )
+            .await;
             if let Err(e) = res {
                 error!("Error talking to the server {addr}: {e}");
             }
@@ -91,6 +106,8 @@ impl Comms {
 async fn talk_server_socket<T>(
     outgoing_rx: &mut Receiver<ClientMsg>,
     incoming_tx: Sender<ServerMsg>,
+    shutdown_tx: broadcast::Sender<()>,
+    mut shutdown_rx: broadcast::Receiver<()>,
     socket: &mut WebSocketStream<T>,
 ) -> Result<()>
 where
@@ -118,7 +135,8 @@ where
                         incoming_tx.send(msg).await.context("Incoming message channel is closed")?;
                     }
                     Message::Close(_frame) => {
-                        info!("⛔ Received WS close message from server, disconnecting");
+                        info!("👋 Received WS close message from server, disconnecting");
+                        shutdown_tx.send(())?;
                         return Ok(());
                     },
                     _ => {},
@@ -126,9 +144,9 @@ where
             }
 
             // Shutdown
-            res = signal::ctrl_c() => {
+            res = shutdown_rx.recv() => {
                 res.context("Error listening for shutdown signal")?;
-                info!("⛔ Received ctrl-c, shutting down");
+                info!("⛔ Received shutdown signal");
                 return Ok(());
             }
         }

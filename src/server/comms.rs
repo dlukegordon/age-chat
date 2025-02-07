@@ -90,7 +90,7 @@ where
                     }
 
                     Message::Close(_frame) => {
-                        info!("⛔ Received WS close message from {peer_addr}, disconnecting");
+                        info!("👋 Received WS close message from {peer_addr}, disconnecting");
                         return Ok(());
                     },
                     Message::Binary(_payload) => error!("Server does not support binary messages"),
