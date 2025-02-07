@@ -36,6 +36,14 @@ struct ServerArgs {
 
 #[derive(Parser)]
 struct ClientArgs {
+    /// Username to authenticate as
+    #[clap(long, short = 'u', default_value_t = get_current_user())]
+    username: String,
+
+    /// Recipient to chat with
+    #[clap(long, short = 'r', default_value_t = get_current_user())]
+    recipient: String,
+
     #[command(flatten)]
     common: CommonArgs,
 }
@@ -55,4 +63,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     cli.run().await?;
     Ok(())
+}
+
+fn get_current_user() -> String {
+    std::env::var("USER").unwrap()
 }

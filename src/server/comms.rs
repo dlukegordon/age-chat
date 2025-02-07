@@ -125,9 +125,8 @@ where
     match msg {
         ClientMsg::SendNote(SendNote { note }) => {
             info!("✉️ Client {peer_addr} sent new note, echoing back");
-            let rec_note = RecNote { note };
             socket
-                .send(ServerMsg::RecNote(rec_note).to_ws_msg())
+                .send(ServerMsg::RecNote(RecNote { note }).to_ws_msg())
                 .await?;
         }
     }

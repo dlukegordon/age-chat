@@ -20,14 +20,20 @@ pub async fn run(args: ClientArgs) -> Result<()> {
     info!("🏁 Client started");
 
     // Create a channel for coordinated shutdown
-    let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(10);
+    let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
 
     // Start communication with server
     let addr = format!("ws://{}", args.common.address);
     let mut comms = Comms::run(addr, shutdown_tx.clone(), shutdown_rx.resubscribe()).await?;
 
     // Run the TUI
-    tui::run(&mut comms, shutdown_tx, shutdown_rx)?;
+    tui::run(
+        &mut comms,
+        args.username,
+        args.recipient,
+        shutdown_tx,
+        shutdown_rx,
+    )?;
 
     // Shutdown
     comms.wait_shutdown().await?;

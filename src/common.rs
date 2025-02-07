@@ -17,13 +17,6 @@ pub enum ClientMsg {
     SendNote(SendNote),
 }
 
-/// A chat message
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Note {
-    pub content: String,
-    pub timestamp: DateTime<Utc>,
-}
-
 /// Signal the client they have received a new chat message
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecNote {
@@ -34,6 +27,15 @@ pub struct RecNote {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SendNote {
     pub note: Note,
+}
+
+/// A chat message
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Note {
+    pub from: String,
+    pub to: String,
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 impl FromStr for ServerMsg {
@@ -79,8 +81,10 @@ impl ClientMsg {
 }
 
 impl Note {
-    pub fn new(content: String) -> Self {
+    pub fn new(from: String, to: String, content: String) -> Self {
         Self {
+            from,
+            to,
             content,
             timestamp: Utc::now(),
         }

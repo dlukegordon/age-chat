@@ -16,10 +16,16 @@ use tracing::info;
 use super::comms::Comms;
 use crate::common::{ClientMsg, Note, RecNote, SendNote, ServerMsg};
 
-pub fn run(comms: &mut Comms, shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Result<()> {
+pub fn run(
+    comms: &mut Comms,
+    username: String,
+    recipient: String,
+    shutdown_tx: Sender<()>,
+    shutdown_rx: Receiver<()>,
+) -> Result<()> {
     info!("🖥️ Started TUI");
     let terminal = ratatui::init();
-    let app = App::new(comms, shutdown_tx, shutdown_rx);
+    let app = App::new(comms, username, recipient, shutdown_tx, shutdown_rx);
     let app_res = app.run(terminal);
     ratatui::restore();
     info!("🖥️ Stopped TUI");
@@ -32,23 +38,35 @@ const POLL_DURATION_MILLIS: u64 = 10;
 struct App<'a> {
     /// Communication with server
     comms: &'a mut Comms,
+    /// Current username
+    username: String,
+    /// Current recipient we are chatting with
+    recipient: String,
+    /// History of recorded notes (chat messages)
+    notes: Vec<Note>,
     /// Current value of the input box
     input: String,
     /// Position of cursor in the editor area.
     character_index: usize,
-    /// History of recorded notes (chat messages)
-    notes: Vec<Note>,
     /// Channels to coordinate shutdowns with the rest of the program
     shutdown_tx: Sender<()>,
     shutdown_rx: Receiver<()>,
 }
 
 impl<'a> App<'a> {
-    const fn new(comms: &'a mut Comms, shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Self {
+    const fn new(
+        comms: &'a mut Comms,
+        username: String,
+        recipient: String,
+        shutdown_tx: Sender<()>,
+        shutdown_rx: Receiver<()>,
+    ) -> Self {
         Self {
             comms,
-            input: String::new(),
+            username,
+            recipient,
             notes: Vec::new(),
+            input: String::new(),
             character_index: 0,
             shutdown_tx,
             shutdown_rx,
@@ -104,7 +122,11 @@ impl<'a> App<'a> {
 
     fn submit_note(&mut self) -> Result<()> {
         let send_note = SendNote {
-            note: Note::new(self.input.clone()),
+            note: Note::new(
+                self.username.clone(),
+                self.recipient.clone(),
+                self.input.clone(),
+            ),
         };
         self.comms.try_send_msg(ClientMsg::SendNote(send_note))?;
 
@@ -147,7 +169,7 @@ impl<'a> App<'a> {
     fn render_note(&self, note: &Note) -> String {
         let local_time = note.timestamp.with_timezone(&Local);
         let timestamp_str = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
-        format!("[{timestamp_str}] {}: {}", "me", note.content)
+        format!("[{timestamp_str}] {}: {}", note.from, note.content)
     }
 
     fn move_cursor_left(&mut self) {
