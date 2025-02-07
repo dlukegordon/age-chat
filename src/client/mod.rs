@@ -17,7 +17,6 @@ pub async fn run(args: ClientArgs) -> Result<()> {
     // Logging
     let file = File::create(LOG_PATH)?;
     tracing_subscriber::fmt().with_writer(file).init();
-
     info!("🏁 Client started");
 
     // Create a channel for coordinated shutdown
@@ -25,13 +24,10 @@ pub async fn run(args: ClientArgs) -> Result<()> {
 
     // Start communication with server
     let addr = format!("ws://{}", args.common.address);
-    let comms = Comms::run(addr, shutdown_tx.clone(), shutdown_rx.resubscribe()).await?;
+    let mut comms = Comms::run(addr, shutdown_tx.clone(), shutdown_rx.resubscribe()).await?;
 
-    // comms
-    //     .send_message(ClientMsg::send_new_note("hello".into()))
-    //     .await?;
-    // let _msg = comms.receive_message().await?;
-    tui::run(shutdown_tx, shutdown_rx)?;
+    // Run the TUI
+    tui::run(&mut comms, shutdown_tx, shutdown_rx)?;
 
     // Shutdown
     comms.wait_shutdown().await?;

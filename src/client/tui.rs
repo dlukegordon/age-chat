@@ -12,10 +12,13 @@ use ratatui::{
 use tokio::sync::broadcast::{Receiver, Sender};
 use tracing::info;
 
-pub fn run(shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Result<()> {
+use super::comms::Comms;
+use crate::common::{ClientMsg, ServerMsg};
+
+pub fn run(comms: &mut Comms, shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Result<()> {
     info!("🖥️ Started TUI");
     let terminal = ratatui::init();
-    let app = App::new(shutdown_tx, shutdown_rx);
+    let app = App::new(comms, shutdown_tx, shutdown_rx);
     let app_res = app.run(terminal);
     ratatui::restore();
     info!("🖥️ Stopped TUI");
@@ -25,7 +28,9 @@ pub fn run(shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Result<()> {
 const POLL_DURATION_MILLIS: u64 = 10;
 
 /// App holds the state of the application
-struct App {
+struct App<'a> {
+    /// Communication with server
+    comms: &'a mut Comms,
     /// Current value of the input box
     input: String,
     /// Position of cursor in the editor area.
@@ -37,9 +42,10 @@ struct App {
     shutdown_rx: Receiver<()>,
 }
 
-impl App {
-    const fn new(shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Self {
+impl<'a> App<'a> {
+    const fn new(comms: &'a mut Comms, shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Self {
         Self {
+            comms,
             input: String::new(),
             messages: Vec::new(),
             character_index: 0,
@@ -50,14 +56,21 @@ impl App {
 
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         loop {
+            // Shutdown
             if self.shutdown_rx.try_recv().is_ok() {
                 info!("⛔ Received shutdown signal");
                 return Ok(());
             };
 
+            // Check for new messages
+            while let Ok(msg) = self.comms.try_receive_message() {
+                self.handle_msg(msg);
+            }
+
+            // Draw the TUI
             terminal.draw(|frame| self.draw(frame))?;
 
-            // Use poll so we don't block forever waiting for keypress
+            // Handle keypresses, using poll so we don't block forever waiting
             if event::poll(Duration::from_millis(POLL_DURATION_MILLIS))? {
                 let Event::Key(key) = event::read()? else {
                     continue;
@@ -71,7 +84,7 @@ impl App {
                         self.shutdown_tx.send(())?;
                         return Ok(());
                     }
-                    KeyCode::Enter => self.submit_message(),
+                    KeyCode::Enter => self.submit_message()?,
                     KeyCode::Char(to_insert) => self.enter_char(to_insert),
                     KeyCode::Backspace => self.delete_char(),
                     KeyCode::Left => self.move_cursor_left(),
@@ -80,6 +93,10 @@ impl App {
                 }
             }
         }
+    }
+
+    fn handle_msg(&mut self, msg: ServerMsg) {
+        self.messages.push(msg.to_string());
     }
 
     fn draw(&self, frame: &mut Frame) {
@@ -101,9 +118,8 @@ impl App {
         let messages: Vec<ListItem> = self
             .messages
             .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                let content = Line::from(Span::raw(format!("{i}: {m}")));
+            .map(|m| {
+                let content = Line::from(Span::raw(m));
                 ListItem::new(content)
             })
             .collect();
@@ -168,9 +184,12 @@ impl App {
         self.character_index = 0;
     }
 
-    fn submit_message(&mut self) {
-        self.messages.push(self.input.clone());
+    fn submit_message(&mut self) -> Result<()> {
+        self.comms
+            .try_send_message(ClientMsg::send_new_note(self.input.clone()))?;
+
         self.input.clear();
         self.reset_cursor();
+        Ok(())
     }
 }
