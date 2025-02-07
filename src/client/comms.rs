@@ -39,14 +39,11 @@ impl Comms {
             // Talk to the server over the socket
             let res = talk_server_socket(&mut outgoing_rx, incoming_tx, &mut socket).await;
             if let Err(e) = res {
-                error!("Error talking to the server {addr} over the WS connection: {e}");
+                error!("Error talking to the server {addr}: {e}");
             }
 
-            // Close connection to server
-            let res = socket.close(None).await;
-            if let Err(e) = res {
-                error!("Error closing the server {addr} WS connection: {e}");
-            }
+            // Close connection to server. It's fine if it errors out.
+            _ = socket.close(None).await;
             info!("⛓️‍💥 Disconnected from server: {addr}");
         });
 
@@ -102,10 +99,17 @@ where
             // Receive incoming messages from server to channel
             ws_msg_res_opt = read.next() => {
                 let ws_msg = ws_msg_res_opt.ok_or(anyhow!("Connection to server closed"))??;
-                if let Message::Text(payload) = ws_msg {
-                    let msg = ServerMsg::from_str(&payload).context("Error deserializing ServerMsg")?;
-                    info!("📥 Received message: {msg:?}");
-                    incoming_tx.send(msg).await.context("Incoming message channel is closed")?;
+                match ws_msg {
+                    Message::Text(payload) => {
+                        let msg = ServerMsg::from_str(&payload).context("Error deserializing ServerMsg")?;
+                        info!("📥 Received message: {msg:?}");
+                        incoming_tx.send(msg).await.context("Incoming message channel is closed")?;
+                    }
+                    Message::Close(_frame) => {
+                        info!("⛔ Received WS close message from server, disconnecting");
+                        return Ok(());
+                    },
+                    _ => {},
                 }
             }
 

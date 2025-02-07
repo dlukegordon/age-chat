@@ -1,10 +1,11 @@
-use anyhow::Result;
-use futures_util::{SinkExt, StreamExt};
+use anyhow::{anyhow, Context, Result};
+use futures_util::{future::join_all, SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
+    signal,
 };
 use tokio_tungstenite::{
     accept_async,
@@ -20,39 +21,49 @@ pub async fn serve(addr: &str) -> Result<()> {
     let listener = TcpListener::bind(&addr).await?;
     info!("📡 Server listening on {addr}");
 
+    let mut task_handles = vec![];
     loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                tokio::spawn(async move {
+        tokio::select! {
+            // Serve connections
+            accept_res = listener.accept() => {
+                let (stream, _addr) = accept_res.context("Error accepting tcp connection")?;
+                let handle = tokio::spawn(async move {
                     let res = serve_client_tcp_conn(stream).await;
                     if let Err(e) = res {
                         error!("Error serving tcp connection: {e}");
                     }
                 });
+                task_handles.push(handle);
             }
-            Err(e) => {
-                error!("Error accepting tcp connection: {e}");
-                break;
+
+            // Shutdown
+            res = signal::ctrl_c() => {
+                res.context("Error listening for shutdown signal")?;
+                info!("⛔ Received ctrl-c in serve, shutting down");
+                // Wait for connections to close
+                join_all(task_handles).await;
+                return Ok(());
             }
         }
     }
-
-    info!("🛑 Server stopped");
-    Ok(())
 }
 
 /// Upgrade client tcp connection to websocket and serve
 async fn serve_client_tcp_conn(tcp_stream: TcpStream) -> Result<()> {
+    // Open ws connection to client
     let peer_addr = tcp_stream.peer_addr()?;
     let mut socket = accept_async(tcp_stream).await?;
-    info!("🔗 Connected: {peer_addr}");
+    info!("🔗 Connected to client: {peer_addr}");
 
+    // Serve the client
     let res = serve_client_ws_conn(peer_addr, &mut socket).await;
     if let Err(e) = res {
         error!("Error serving WS connection {peer_addr}: {e}");
     }
 
-    info!("⛓️‍💥 Disconnected: {peer_addr}");
+    // Close connection to client. It's fine if it errors out.
+    _ = socket.close(None).await;
+    info!("⛓️‍💥 Disconnected from client: {peer_addr}");
     Ok(())
 }
 
@@ -64,36 +75,43 @@ async fn serve_client_ws_conn<T>(
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    while let Some(ws_msg_res) = socket.next().await {
-        let ws_msg = match ws_msg_res {
-            Ok(ret) => ret,
-            Err(e) => {
-                error!("Error receiving next WS message from {peer_addr}: {e}");
-                break;
-            }
-        };
+    loop {
+        tokio::select! {
+            // Handle incoming WS messages from client
+            ws_msg_res_opt = socket.next() => {
+                let ws_msg = ws_msg_res_opt.ok_or(anyhow!("Connection to server closed"))??;
+                info!("Received WS message from {peer_addr}: {ws_msg:?}");
 
-        info!("Received WS message from {peer_addr}: {ws_msg:?}");
-        match ws_msg {
-            Message::Text(payload) => {
-                let res = handle_client_text_msg(socket, peer_addr, payload).await;
-                if let Err(e) = res {
-                    error!("Error handling client WS message from {peer_addr}: {e}");
+                match ws_msg {
+                    Message::Text(payload) => {
+                        handle_client_ws_text_msg(socket, peer_addr, payload)
+                            .await
+                            .context("Error handling client text WS text message")?;
+                    }
+
+                    Message::Close(_frame) => {
+                        info!("⛔ Received WS close message from {peer_addr}, disconnecting");
+                        return Ok(());
+                    },
+                    Message::Binary(_payload) => error!("Server does not support binary messages"),
+                    Message::Frame(_frame) => error!("Server does not support frame messages"),
+                    // tokio_tungstenite automatically handles ping/pong
+                    _ => {}
                 }
             }
 
-            Message::Binary(_payload) => error!("Server does not support binary messages"),
-            Message::Frame(_frame) => error!("Server does not support frame messages"),
-
-            // tokio_tungstenite automatically handles close handshakes and ping/pong
-            _ => {}
+            // Shutdown
+            res = signal::ctrl_c() => {
+                res.context("Error listening for shutdown signal")?;
+                info!("⛔ Received ctrl-c in serve_client_ws_conn, shutting down");
+                return Ok(());
+            }
         }
     }
-
-    Ok(())
 }
 
-async fn handle_client_text_msg<T>(
+/// Handle WS text messages from the client
+async fn handle_client_ws_text_msg<T>(
     socket: &mut WebSocketStream<T>,
     peer_addr: SocketAddr,
     payload: Utf8Bytes,
