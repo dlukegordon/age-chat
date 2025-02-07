@@ -20,23 +20,41 @@ pub struct Comms {
 }
 
 impl Comms {
-    /// Start the background server communication task
-    pub fn run(addr: String) -> Self {
+    /// Connect to the server and start the background server communication task.
+    /// Will not finish awaiting until the server is connected.
+    pub async fn run(addr: String) -> Result<Self> {
+        // Channel to send messages to server
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<ClientMsg>(CHANNEL_BUFFER_SIZE);
+        // Channel to receive messages from server
         let (incoming_tx, incoming_rx) = mpsc::channel::<ServerMsg>(CHANNEL_BUFFER_SIZE);
 
+        // Open connection to server
+        let (mut socket, _) = connect_async(&addr)
+            .await
+            .context(format!("Cannot connect to {addr}"))?;
+        info!("🔗 Connected to server: {addr}");
+
+        // Start the background server communication task
         let task_handle = tokio::spawn(async move {
-            let res = talk_server(&addr, &mut outgoing_rx, incoming_tx).await;
+            // Talk to the server over the socket
+            let res = talk_server_socket(&mut outgoing_rx, incoming_tx, &mut socket).await;
             if let Err(e) = res {
-                error!("Error talking to server: {e}");
+                error!("Error talking to the server {addr} over the WS connection: {e}");
             }
+
+            // Close connection to server
+            let res = socket.close(None).await;
+            if let Err(e) = res {
+                error!("Error closing the server {addr} WS connection: {e}");
+            }
+            info!("⛓️‍💥 Disconnected from server: {addr}");
         });
 
-        Comms {
+        Ok(Comms {
             incoming_rx,
             outgoing_tx,
             task_handle,
-        }
+        })
     }
 
     /// Send a message to the server
@@ -58,38 +76,6 @@ impl Comms {
         self.task_handle.await?;
         Ok(())
     }
-}
-
-/// Connect to the server and talk to it
-async fn talk_server(
-    addr: &str,
-    outgoing_rx: &mut Receiver<ClientMsg>,
-    incoming_tx: Sender<ServerMsg>,
-) -> Result<()> {
-    // Open connection to server
-    let (mut socket, _) = match connect_async(addr).await {
-        Ok(ret) => ret,
-        Err(e) => {
-            error!("❌ Cannot connect to {addr}: {e}");
-            // Just returning Ok for ux
-            return Ok(());
-        }
-    };
-    info!("🔗 Connected to server: {addr}");
-
-    // Talk to the server over the socket
-    let res = talk_server_socket(outgoing_rx, incoming_tx, &mut socket).await;
-    if let Err(e) = res {
-        error!("Error talking to the server {addr} over the WS connection: {e}");
-    }
-
-    // Close connection to server
-    let res = socket.close(None).await;
-    if let Err(e) = res {
-        error!("Error closing the server {addr} WS connection: {e}");
-    }
-    info!("⛓️‍💥 Disconnected from server: {addr}");
-    Ok(())
 }
 
 /// Talk to the server over the websocket connection
@@ -119,16 +105,16 @@ where
                 if let Message::Text(payload) = ws_msg {
                     let msg = ServerMsg::from_str(&payload).context("Error deserializing ServerMsg")?;
                     info!("📥 Received message: {msg:?}");
-                    incoming_tx.send(msg).await.context("incoming message channel is closed")?;
+                    incoming_tx.send(msg).await.context("Incoming message channel is closed")?;
                 }
             }
 
             // Shutdown
             res = signal::ctrl_c() => {
+                res.context("Error listening for shutdown signal")?;
                 info!("⛔ Received ctrl-c, shutting down");
-                return res.context("Error listening for shutdown signal")
+                return Ok(());
             }
-
         }
     }
 }
