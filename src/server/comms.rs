@@ -14,7 +14,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::common::{ClientMsg, ServerMsg};
+use crate::common::{ClientMsg, RecNote, SendNote, ServerMsg};
 
 /// Run the server
 pub async fn serve(addr: &str) -> Result<()> {
@@ -123,10 +123,11 @@ where
     info!("📥 Received message from {peer_addr}: {msg}");
 
     match msg {
-        ClientMsg::SendNewNote(note) => {
-            info!("✉️ Client {peer_addr} sent new note, echoing back:\n{note:?}");
+        ClientMsg::SendNote(SendNote { note }) => {
+            info!("✉️ Client {peer_addr} sent new note, echoing back");
+            let rec_note = RecNote { note };
             socket
-                .send(ServerMsg::rec_new_note(note.content).to_ws_msg())
+                .send(ServerMsg::RecNote(rec_note).to_ws_msg())
                 .await?;
         }
     }

@@ -7,28 +7,33 @@ use tokio_tungstenite::tungstenite::Message;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ServerMsg {
-    RecNewNote(RecNewNote),
+    RecNote(RecNote),
 }
 
 /// WS Messages that the client sends
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
-    SendNewNote(SendNewNote),
+    SendNote(SendNote),
+}
+
+/// A chat message
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Note {
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 /// Signal the client they have received a new chat message
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RecNewNote {
-    pub content: String,
-    pub timestamp: DateTime<Utc>,
+pub struct RecNote {
+    pub note: Note,
 }
 
 /// Signal the server to send a new chat message
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SendNewNote {
-    pub content: String,
-    pub timestamp: DateTime<Utc>,
+pub struct SendNote {
+    pub note: Note,
 }
 
 impl FromStr for ServerMsg {
@@ -49,10 +54,6 @@ impl fmt::Display for ServerMsg {
 impl ServerMsg {
     pub fn to_ws_msg(&self) -> Message {
         Message::text(self.to_string())
-    }
-
-    pub fn rec_new_note(content: String) -> Self {
-        Self::RecNewNote(RecNewNote::new(content))
     }
 }
 
@@ -75,22 +76,9 @@ impl ClientMsg {
     pub fn to_ws_msg(&self) -> Message {
         Message::text(self.to_string())
     }
-
-    pub fn send_new_note(content: String) -> Self {
-        Self::SendNewNote(SendNewNote::new(content))
-    }
 }
 
-impl RecNewNote {
-    pub fn new(content: String) -> Self {
-        Self {
-            content,
-            timestamp: Utc::now(),
-        }
-    }
-}
-
-impl SendNewNote {
+impl Note {
     pub fn new(content: String) -> Self {
         Self {
             content,

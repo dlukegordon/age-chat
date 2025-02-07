@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Layout, Position},
@@ -13,7 +14,7 @@ use tokio::sync::broadcast::{Receiver, Sender};
 use tracing::info;
 
 use super::comms::Comms;
-use crate::common::{ClientMsg, ServerMsg};
+use crate::common::{ClientMsg, Note, RecNote, SendNote, ServerMsg};
 
 pub fn run(comms: &mut Comms, shutdown_tx: Sender<()>, shutdown_rx: Receiver<()>) -> Result<()> {
     info!("🖥️ Started TUI");
@@ -35,8 +36,8 @@ struct App<'a> {
     input: String,
     /// Position of cursor in the editor area.
     character_index: usize,
-    /// History of recorded messages
-    messages: Vec<String>,
+    /// History of recorded notes (chat messages)
+    notes: Vec<Note>,
     /// Channels to coordinate shutdowns with the rest of the program
     shutdown_tx: Sender<()>,
     shutdown_rx: Receiver<()>,
@@ -47,7 +48,7 @@ impl<'a> App<'a> {
         Self {
             comms,
             input: String::new(),
-            messages: Vec::new(),
+            notes: Vec::new(),
             character_index: 0,
             shutdown_tx,
             shutdown_rx,
@@ -63,7 +64,7 @@ impl<'a> App<'a> {
             };
 
             // Check for new messages
-            while let Ok(msg) = self.comms.try_receive_message() {
+            while let Ok(msg) = self.comms.try_recv_msg() {
                 self.handle_msg(msg);
             }
 
@@ -84,7 +85,7 @@ impl<'a> App<'a> {
                         self.shutdown_tx.send(())?;
                         return Ok(());
                     }
-                    KeyCode::Enter => self.submit_message()?,
+                    KeyCode::Enter => self.submit_note()?,
                     KeyCode::Char(to_insert) => self.enter_char(to_insert),
                     KeyCode::Backspace => self.delete_char(),
                     KeyCode::Left => self.move_cursor_left(),
@@ -96,12 +97,25 @@ impl<'a> App<'a> {
     }
 
     fn handle_msg(&mut self, msg: ServerMsg) {
-        self.messages.push(msg.to_string());
+        match msg {
+            ServerMsg::RecNote(RecNote { note }) => self.notes.push(note),
+        }
+    }
+
+    fn submit_note(&mut self) -> Result<()> {
+        let send_note = SendNote {
+            note: Note::new(self.input.clone()),
+        };
+        self.comms.try_send_msg(ClientMsg::SendNote(send_note))?;
+
+        self.input.clear();
+        self.reset_cursor();
+        Ok(())
     }
 
     fn draw(&self, frame: &mut Frame) {
         let vertical = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]);
-        let [messages_area, input_area] = vertical.areas(frame.area());
+        let [notes_area, input_area] = vertical.areas(frame.area());
 
         let input = Paragraph::new(self.input.as_str())
             .style(Style::default().fg(Color::Yellow))
@@ -115,16 +129,22 @@ impl<'a> App<'a> {
             input_area.y + 1,
         ));
 
-        let messages: Vec<ListItem> = self
-            .messages
+        let notes: Vec<ListItem> = self
+            .notes
             .iter()
-            .map(|m| {
-                let content = Line::from(Span::raw(m));
+            .map(|n| {
+                let content = Line::from(Span::raw(self.render_note(n)));
                 ListItem::new(content)
             })
             .collect();
-        let messages = List::new(messages).block(Block::bordered().title("Messages"));
-        frame.render_widget(messages, messages_area);
+        let notes = List::new(notes).block(Block::bordered().title("Messages"));
+        frame.render_widget(notes, notes_area);
+    }
+
+    fn render_note(&self, note: &Note) -> String {
+        let local_time = note.timestamp.with_timezone(&Local);
+        let timestamp_str = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
+        format!("[{timestamp_str}] {}: {}", "me", note.content)
     }
 
     fn move_cursor_left(&mut self) {
@@ -182,14 +202,5 @@ impl<'a> App<'a> {
 
     fn reset_cursor(&mut self) {
         self.character_index = 0;
-    }
-
-    fn submit_message(&mut self) -> Result<()> {
-        self.comms
-            .try_send_message(ClientMsg::send_new_note(self.input.clone()))?;
-
-        self.input.clear();
-        self.reset_cursor();
-        Ok(())
     }
 }

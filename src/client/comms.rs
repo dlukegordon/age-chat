@@ -71,13 +71,13 @@ impl Comms {
     }
 
     /// Send a message to the server
-    pub async fn send_message(&self, message: ClientMsg) -> Result<()> {
+    pub async fn send_msg(&self, message: ClientMsg) -> Result<()> {
         self.outgoing_tx.send(message).await?;
         Ok(())
     }
 
     /// Receive a message from the server
-    pub async fn receive_message(&mut self) -> Result<ServerMsg> {
+    pub async fn recv_msg(&mut self) -> Result<ServerMsg> {
         self.incoming_rx
             .recv()
             .await
@@ -85,12 +85,12 @@ impl Comms {
     }
 
     /// Send a message to the server without blocking
-    pub fn try_send_message(&self, message: ClientMsg) -> Result<()> {
+    pub fn try_send_msg(&self, message: ClientMsg) -> Result<()> {
         Ok(self.outgoing_tx.try_send(message)?)
     }
 
     /// Receive a message from the server without blocking
-    pub fn try_receive_message(&mut self) -> Result<ServerMsg> {
+    pub fn try_recv_msg(&mut self) -> Result<ServerMsg> {
         Ok(self.incoming_rx.try_recv()?)
     }
 
