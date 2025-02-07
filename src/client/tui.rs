@@ -128,7 +128,6 @@ impl App {
     }
 
     /// Returns the byte index based on the character position.
-    ///
     /// Since each character in a string can be contain multiple bytes, it's necessary to calculate
     /// the byte index based on the index of the character.
     fn byte_index(&self) -> usize {

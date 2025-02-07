@@ -1,6 +1,8 @@
 mod comms;
 mod tui;
 
+use std::fs::File;
+
 use anyhow::Result;
 use tokio::sync::broadcast;
 use tracing::info;
@@ -8,8 +10,14 @@ use tracing::info;
 use crate::client::comms::Comms;
 use crate::ClientArgs;
 
+const LOG_PATH: &str = "client.log";
+
 /// Entrance point to client from cli
 pub async fn run(args: ClientArgs) -> Result<()> {
+    // Logging
+    let file = File::create(LOG_PATH)?;
+    tracing_subscriber::fmt().with_writer(file).init();
+
     info!("🏁 Client started");
 
     // Create a channel for coordinated shutdown
