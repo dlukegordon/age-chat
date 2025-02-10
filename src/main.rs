@@ -5,7 +5,7 @@ mod server;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-const DEFAULT_ADDRESS: &str = "127.0.0.1:42069";
+const DEFAULT_ADDRESS: &str = "0.0.0.0:42069";
 
 #[derive(Parser)]
 struct Cli {

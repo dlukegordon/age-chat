@@ -12,9 +12,7 @@ use tokio::{
 use tokio_tungstenite::{connect_async, tungstenite::Message, WebSocketStream};
 use tracing::{error, info};
 
-use crate::common::{ClientMsg, ServerMsg};
-
-const CHANNEL_BUFFER_SIZE: usize = 1000;
+use crate::common::{ClientMsg, ServerMsg, CHANNEL_BUFFER_SIZE};
 
 /// Manages communication with the server
 pub struct Comms {
@@ -68,20 +66,6 @@ impl Comms {
             outgoing_tx,
             task_handle,
         })
-    }
-
-    /// Send a message to the server
-    pub async fn send_msg(&self, message: ClientMsg) -> Result<()> {
-        self.outgoing_tx.send(message).await?;
-        Ok(())
-    }
-
-    /// Receive a message from the server
-    pub async fn recv_msg(&mut self) -> Result<ServerMsg> {
-        self.incoming_rx
-            .recv()
-            .await
-            .ok_or(anyhow!("Incoming message channel is closed"))
     }
 
     /// Send a message to the server without blocking

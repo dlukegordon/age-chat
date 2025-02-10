@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use tokio_tungstenite::tungstenite::Message;
 
+pub const CHANNEL_BUFFER_SIZE: usize = 1000;
+
 /// WS Messages that the server sends
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
