@@ -2,8 +2,10 @@ mod comms;
 mod tui;
 
 use std::fs::File;
+use std::str::FromStr;
 
-use anyhow::Result;
+use age::x25519::{Identity, Recipient};
+use anyhow::{anyhow, Result};
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -19,6 +21,16 @@ pub async fn run(args: ClientArgs) -> Result<()> {
     tracing_subscriber::fmt().with_writer(file).init();
     info!("🏁 Client started");
 
+    // Load the key file
+    let key_file = std::fs::read_to_string(args.key_file)?
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    let key = Identity::from_str(&key_file).map_err(|e| anyhow!(e))?;
+    let recipient = Recipient::from_str(&args.recipient).map_err(|e| anyhow!(e))?;
+    info!("🔑 Key file loaded");
+
     // Create a channel for coordinated shutdown
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
 
@@ -27,13 +39,7 @@ pub async fn run(args: ClientArgs) -> Result<()> {
     let mut comms = Comms::run(addr, shutdown_tx.clone(), shutdown_rx.resubscribe()).await?;
 
     // Run the TUI
-    tui::run(
-        &mut comms,
-        args.username,
-        args.recipient,
-        shutdown_tx,
-        shutdown_rx,
-    )?;
+    tui::run(&mut comms, key, recipient, shutdown_tx, shutdown_rx)?;
 
     // Shutdown
     comms.wait_shutdown().await?;

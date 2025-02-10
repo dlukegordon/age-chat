@@ -1,5 +1,7 @@
+use age::x25519::Recipient;
 use anyhow::{anyhow, Context, Result};
 use futures_util::{future::join_all, SinkExt, StreamExt};
+use rand::RngCore;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::{net::SocketAddr, sync::Arc};
@@ -72,7 +74,8 @@ struct Connection {
     note_tx: Sender<Note>,
     note_rx: Receiver<Note>,
     // Track authentication state
-    username: Option<String>,
+    pub_key: Option<String>,
+    auth_secret: Option<String>,
 }
 
 impl Connection {
@@ -91,7 +94,8 @@ impl Connection {
             user_conns,
             note_tx,
             note_rx,
-            username: None,
+            pub_key: None,
+            auth_secret: None,
         })
     }
 
@@ -104,7 +108,7 @@ impl Connection {
         }
 
         // Clean up user_conns
-        if let Some(username) = self.username {
+        if let Some(username) = self.pub_key {
             let mut user_conns_write = self.user_conns.write().await;
             user_conns_write.remove(&username);
         }
@@ -126,9 +130,7 @@ impl Connection {
 
                     match ws_msg {
                         Message::Text(payload) => {
-                            self.handle_client_ws_text_msg(payload)
-                                .await
-                                .context("Error handling client text WS text message")?;
+                            self.handle_client_ws_text_msg(payload).await?
                         }
 
                         Message::Close(_frame) => {
@@ -171,6 +173,7 @@ impl Connection {
 
         match msg {
             ClientMsg::AuthReq(auth) => self.handle_auth_req(auth).await?,
+            ClientMsg::AuthPlaintext(auth) => self.handle_auth_plaintext(auth).await?,
             ClientMsg::SendNote(note) => self.handle_send_note(note).await?,
         }
         Ok(())
@@ -180,17 +183,43 @@ impl Connection {
     async fn handle_auth_req(&mut self, auth: Auth) -> Result<()> {
         info!(
             "✍️ Client {} attempting to authenticate as {}",
-            self.peer_addr, auth.username
+            self.peer_addr, auth.pub_key
         );
 
-        // TODO: For now we are not checking auth and just granting
+        // Generate random secret and encrypt to client
+        let mut bytes = [0u8; 64];
+        rand::rng().fill_bytes(&mut bytes);
+        let secret = hex::encode(bytes);
+        self.auth_secret = Some(secret.clone());
+        let recipient = Recipient::from_str(&auth.pub_key).map_err(|e| anyhow!(e))?;
+        let ciphertext = age::encrypt_and_armor(&recipient, secret.as_bytes())?;
+
+        // Send to client for decryption
+        let auth_secret = Auth {
+            pub_key: auth.pub_key,
+            ciphertext,
+            plaintext: "".to_string(),
+        };
+        self.socket
+            .send(ServerMsg::AuthSecret(auth_secret).to_ws_msg())
+            .await?;
+        Ok(())
+    }
+
+    /// Handle the client sending back the decrypted auth secret
+    async fn handle_auth_plaintext(&mut self, auth: Auth) -> Result<()> {
+        info!(
+            "✍️ Client {} attempting to authenticate as {}, sent back plaintext",
+            self.peer_addr, auth.pub_key
+        );
+
         // User cannot be authenticated twice at the same time
         {
             let user_conns_read = self.user_conns.read().await;
-            if user_conns_read.contains_key(&auth.username) {
+            if user_conns_read.contains_key(&auth.pub_key) {
                 error!(
                     "✍️ Client {} failed authenticating as {}, user is already authenticated",
-                    self.peer_addr, auth.username
+                    self.peer_addr, auth.pub_key
                 );
                 self.socket
                     .send(ServerMsg::AuthDenied(auth).to_ws_msg())
@@ -199,14 +228,32 @@ impl Connection {
             }
         }
 
+        // Check decryption
+        let auth_secret = self
+            .auth_secret
+            .clone()
+            .ok_or(anyhow!("No auth secret set, cannot check"))?;
+        if auth_secret != auth.plaintext {
+            error!(
+                "✍️ Client {} failed authenticating as {}, incorrect plaintext",
+                self.peer_addr, auth.pub_key
+            );
+            self.socket
+                .send(ServerMsg::AuthDenied(auth).to_ws_msg())
+                .await?;
+            return Ok(());
+        }
+
         // Add username and note_tx to user_conns
         let mut user_conns_write = self.user_conns.write().await;
-        user_conns_write.insert(auth.username.clone(), self.note_tx.clone());
+        // TODO: this is not secure, client could authenticate as different pub key
+        // than the message was encrypted for
+        user_conns_write.insert(auth.pub_key.clone(), self.note_tx.clone());
         info!(
             "✍️ Client {} successfully authenticated as {}",
-            self.peer_addr, auth.username
+            self.peer_addr, auth.pub_key
         );
-        self.username = Some(auth.username.clone());
+        self.pub_key = Some(auth.pub_key.clone());
         self.socket
             .send(ServerMsg::AuthGranted(auth).to_ws_msg())
             .await?;

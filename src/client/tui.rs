@@ -1,5 +1,4 @@
-use std::time::Duration;
-
+use age::x25519::{Identity, Recipient};
 use anyhow::Result;
 use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -10,6 +9,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph},
     DefaultTerminal, Frame,
 };
+use std::time::Duration;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tracing::info;
 
@@ -18,14 +18,14 @@ use crate::common::{Auth, ClientMsg, Note, ServerMsg};
 
 pub fn run(
     comms: &mut Comms,
-    username: String,
-    recipient: String,
+    key: Identity,
+    recipient: Recipient,
     shutdown_tx: Sender<()>,
     shutdown_rx: Receiver<()>,
 ) -> Result<()> {
     info!("🖥️ Started TUI");
     let terminal = ratatui::init();
-    let app = App::new(comms, username, recipient, shutdown_tx, shutdown_rx);
+    let app = App::new(comms, key, recipient, shutdown_tx, shutdown_rx);
     let app_res = app.run(terminal);
     ratatui::restore();
     info!("🖥️ Stopped TUI");
@@ -38,12 +38,14 @@ const POLL_DURATION_MILLIS: u64 = 10;
 struct App<'a> {
     /// Communication with server
     comms: &'a mut Comms,
-    /// Current username
-    username: String,
+    /// Current private key
+    priv_key: Identity,
+    /// Current public key
+    pub_key: Recipient,
     /// Whether or not we've succesfully authenticated
     authenticated: bool,
-    /// Current recipient we are chatting with
-    recipient: String,
+    /// Current recipient pubkey we are chatting with
+    recipient: Recipient,
     /// History of recorded notes (chat messages)
     notes: Vec<Note>,
     /// Current value of the input box
@@ -56,16 +58,17 @@ struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    const fn new(
+    fn new(
         comms: &'a mut Comms,
-        username: String,
-        recipient: String,
+        key: Identity,
+        recipient: Recipient,
         shutdown_tx: Sender<()>,
         shutdown_rx: Receiver<()>,
     ) -> Self {
         Self {
             comms,
-            username,
+            pub_key: key.to_public(),
+            priv_key: key,
             authenticated: false,
             recipient,
             notes: Vec::new(),
@@ -81,10 +84,10 @@ impl<'a> App<'a> {
         // Authenticate
         info!(
             "✍️ Attempting to authenticate to server as {}",
-            self.username
+            self.pub_key
         );
         self.comms
-            .try_send_msg(ClientMsg::AuthReq(Auth::new(self.username.clone())))?;
+            .try_send_msg(ClientMsg::AuthReq(Auth::new(self.pub_key.to_string())))?;
 
         loop {
             // Shutdown
@@ -114,10 +117,28 @@ impl<'a> App<'a> {
     /// Handle incoming message from the server
     fn handle_msg(&mut self, msg: ServerMsg) -> Result<()> {
         match msg {
+            ServerMsg::AuthSecret(auth) => {
+                info!(
+                    "✍️ Decrypting secret {} for pubkey {} to authenticate to the server",
+                    auth.ciphertext, auth.pub_key
+                );
+                // TODO: what if pub_key in auth is different than self.pub_key?
+                // TODO: this is not secure, as the server can have the client decrypt arbitrary secrets
+                let plaintext =
+                    String::from_utf8(age::decrypt(&self.priv_key, auth.ciphertext.as_bytes())?)?;
+                let auth_plaintext = Auth {
+                    pub_key: auth.pub_key,
+                    plaintext,
+                    ciphertext: auth.ciphertext,
+                };
+                self.comms
+                    .try_send_msg(ClientMsg::AuthPlaintext(auth_plaintext))?;
+                Ok(())
+            }
             ServerMsg::AuthGranted(auth) => {
                 info!(
                     "✍️ Successfully authenticated to server as {}",
-                    auth.username
+                    auth.pub_key
                 );
                 self.authenticated = true;
                 Ok(())
@@ -125,7 +146,7 @@ impl<'a> App<'a> {
             ServerMsg::AuthDenied(auth) => {
                 info!(
                     "✍️ Failed authenticating to server as {}, shutting down",
-                    auth.username
+                    auth.pub_key
                 );
                 self.shutdown_tx.send(())?;
                 Ok(())
@@ -167,11 +188,7 @@ impl<'a> App<'a> {
 
     /// Send a note when the user presses enter
     fn submit_note(&mut self) -> Result<()> {
-        let note = Note::new(
-            self.username.clone(),
-            self.recipient.clone(),
-            self.input.clone(),
-        );
+        let note = Note::encrypt_new(&self.pub_key, &self.recipient, self.input.clone())?;
         self.comms.try_send_msg(ClientMsg::SendNote(note))?;
 
         self.input.clear();
@@ -191,7 +208,10 @@ impl<'a> App<'a> {
             .notes
             .iter()
             .map(|n| {
-                let content = Line::from(Span::raw(self.render_note(n)));
+                let content = Line::from(Span::raw(
+                    self.render_note(n)
+                        .unwrap_or("<error rendering note>".to_string()),
+                ));
                 ListItem::new(content)
             })
             .collect();
@@ -212,10 +232,14 @@ impl<'a> App<'a> {
     }
 
     /// Render a note as a String for display in the TUI
-    fn render_note(&self, note: &Note) -> String {
+    fn render_note(&self, note: &Note) -> Result<String> {
         let local_time = note.timestamp.with_timezone(&Local);
         let timestamp_str = local_time.format("%Y-%m-%d %H:%M:%S").to_string();
-        format!("[{timestamp_str}] {}: {}", note.from, note.content)
+        Ok(format!(
+            "[{timestamp_str}] {}: {}",
+            note.from,
+            note.decrypt_content(&self.priv_key)?
+        ))
     }
 
     fn move_cursor_left(&mut self) {
