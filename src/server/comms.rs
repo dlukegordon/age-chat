@@ -14,7 +14,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::common::{ClientMsg, RecNote, SendNote, ServerMsg};
+use crate::common::{Auth, ClientMsg, Note, ServerMsg};
 
 /// Run the server
 pub async fn serve(addr: &str) -> Result<()> {
@@ -123,13 +123,46 @@ where
     info!("📥 Received message from {peer_addr}: {msg}");
 
     match msg {
-        ClientMsg::SendNote(SendNote { note }) => {
-            info!("✉️ Client {peer_addr} sent new note, echoing back");
-            socket
-                .send(ServerMsg::RecNote(RecNote { note }).to_ws_msg())
-                .await?;
-        }
+        ClientMsg::AuthReq(auth) => handle_auth_req(socket, peer_addr, auth).await?,
+        ClientMsg::SendNote(note) => handle_send_note(socket, peer_addr, note).await?,
     }
+    Ok(())
+}
 
+/// Handle the client requesting to authenticate
+async fn handle_auth_req<T>(
+    socket: &mut WebSocketStream<T>,
+    peer_addr: SocketAddr,
+    auth: Auth,
+) -> Result<()>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    info!(
+        "✍️ Client {peer_addr} attempting to authenticate as {}",
+        auth.username
+    );
+    // TODO: For now we are not checking auth and just granting
+    info!(
+        "✍️ Client {peer_addr} successfully authenticated as {}",
+        auth.username
+    );
+    socket
+        .send(ServerMsg::AuthGranted(auth).to_ws_msg())
+        .await?;
+    Ok(())
+}
+
+/// Handle the client sending a note
+async fn handle_send_note<T>(
+    socket: &mut WebSocketStream<T>,
+    peer_addr: SocketAddr,
+    note: Note,
+) -> Result<()>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    info!("✉️ Client {peer_addr} sent new note, echoing back");
+    socket.send(ServerMsg::RecNote(note).to_ws_msg()).await?;
     Ok(())
 }

@@ -14,7 +14,7 @@ use tokio::sync::broadcast::{Receiver, Sender};
 use tracing::info;
 
 use super::comms::Comms;
-use crate::common::{ClientMsg, Note, RecNote, SendNote, ServerMsg};
+use crate::common::{Auth, ClientMsg, Note, ServerMsg};
 
 pub fn run(
     comms: &mut Comms,
@@ -40,6 +40,8 @@ struct App<'a> {
     comms: &'a mut Comms,
     /// Current username
     username: String,
+    /// Whether or not we've succesfully authenticated
+    authenticated: bool,
     /// Current recipient we are chatting with
     recipient: String,
     /// History of recorded notes (chat messages)
@@ -64,6 +66,7 @@ impl<'a> App<'a> {
         Self {
             comms,
             username,
+            authenticated: false,
             recipient,
             notes: Vec::new(),
             input: String::new(),
@@ -73,7 +76,16 @@ impl<'a> App<'a> {
         }
     }
 
+    /// Run the main app loop
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        // Authenticate
+        info!(
+            "✍️ Attempting to authenticate to server as {}",
+            self.username
+        );
+        self.comms
+            .try_send_msg(ClientMsg::AuthReq(Auth::new(self.username.clone())))?;
+
         loop {
             // Shutdown
             if self.shutdown_rx.try_recv().is_ok() {
@@ -81,60 +93,93 @@ impl<'a> App<'a> {
                 return Ok(());
             };
 
-            // Check for new messages
+            // Handle new messages
             while let Ok(msg) = self.comms.try_recv_msg() {
-                self.handle_msg(msg);
+                self.handle_msg(msg)?;
+            }
+
+            // Don't do anything else unless authenticated
+            if !self.authenticated {
+                continue;
             }
 
             // Draw the TUI
             terminal.draw(|frame| self.draw(frame))?;
 
-            // Handle keypresses, using poll so we don't block forever waiting
-            if event::poll(Duration::from_millis(POLL_DURATION_MILLIS))? {
-                let Event::Key(key) = event::read()? else {
-                    continue;
-                };
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                };
+            // Handle keypresses
+            self.handle_keypresses()?;
+        }
+    }
 
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
-                        self.shutdown_tx.send(())?;
-                        return Ok(());
-                    }
-                    KeyCode::Enter => self.submit_note()?,
-                    KeyCode::Char(to_insert) => self.enter_char(to_insert),
-                    KeyCode::Backspace => self.delete_char(),
-                    KeyCode::Left => self.move_cursor_left(),
-                    KeyCode::Right => self.move_cursor_right(),
-                    _ => {}
-                }
+    /// Handle incoming message from the server
+    fn handle_msg(&mut self, msg: ServerMsg) -> Result<()> {
+        match msg {
+            ServerMsg::AuthGranted(auth) => {
+                info!(
+                    "✍️ Successfully authenticated to server as {}",
+                    auth.username
+                );
+                self.authenticated = true;
+                Ok(())
+            }
+            ServerMsg::AuthDenied(auth) => {
+                info!(
+                    "✍️ Failed authenticating to server as {}, shutting down",
+                    auth.username
+                );
+                self.shutdown_tx.send(())?;
+                Ok(())
+            }
+            ServerMsg::RecNote(note) => {
+                info!("✉️ Received new note");
+                self.notes.push(note);
+                Ok(())
             }
         }
     }
 
-    fn handle_msg(&mut self, msg: ServerMsg) {
-        match msg {
-            ServerMsg::RecNote(RecNote { note }) => self.notes.push(note),
+    /// Handle keypresses, using poll so we don't block forever waiting
+    fn handle_keypresses(&mut self) -> Result<()> {
+        if event::poll(Duration::from_millis(POLL_DURATION_MILLIS))? {
+            let Event::Key(key) = event::read()? else {
+                return Ok(());
+            };
+            if key.kind != KeyEventKind::Press {
+                return Ok(());
+            };
+
+            match key.code {
+                KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+                    self.shutdown_tx.send(())?;
+                    return Ok(());
+                }
+                KeyCode::Enter => self.submit_note()?,
+                KeyCode::Char(to_insert) => self.enter_char(to_insert),
+                KeyCode::Backspace => self.delete_char(),
+                KeyCode::Left => self.move_cursor_left(),
+                KeyCode::Right => self.move_cursor_right(),
+                _ => {}
+            }
         }
+
+        Ok(())
     }
 
+    /// Send a note when the user presses enter
     fn submit_note(&mut self) -> Result<()> {
-        let send_note = SendNote {
-            note: Note::new(
-                self.username.clone(),
-                self.recipient.clone(),
-                self.input.clone(),
-            ),
-        };
-        self.comms.try_send_msg(ClientMsg::SendNote(send_note))?;
+        let note = Note::new(
+            self.username.clone(),
+            self.recipient.clone(),
+            self.input.clone(),
+        );
+        self.comms.try_send_msg(ClientMsg::SendNote(note))?;
 
         self.input.clear();
         self.reset_cursor();
         Ok(())
     }
 
+    /// Draw the TUI
     fn draw(&self, frame: &mut Frame) {
         let true_black = Color::Rgb(0, 0, 0);
         let true_white = Color::Rgb(255, 255, 255);
@@ -166,6 +211,7 @@ impl<'a> App<'a> {
         ));
     }
 
+    /// Render a note as a String for display in the TUI
     fn render_note(&self, note: &Note) -> String {
         let local_time = note.timestamp.with_timezone(&Local);
         let timestamp_str = local_time.format("%Y-%m-%d %H:%M:%S").to_string();

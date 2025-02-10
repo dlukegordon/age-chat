@@ -7,26 +7,27 @@ use tokio_tungstenite::tungstenite::Message;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ServerMsg {
-    RecNote(RecNote),
+    /// Signal the client that they have successfully authenticated
+    AuthGranted(Auth),
+    /// Signal the client that they have failed authentication
+    AuthDenied(Auth),
+    /// Signal the client they have received a new chat message
+    RecNote(Note),
 }
 
 /// WS Messages that the client sends
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMsg {
-    SendNote(SendNote),
+    /// Request the server to authenticate as a user
+    AuthReq(Auth),
+    /// Signal the server to send a new chat message
+    SendNote(Note),
 }
 
-/// Signal the client they have received a new chat message
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RecNote {
-    pub note: Note,
-}
-
-/// Signal the server to send a new chat message
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SendNote {
-    pub note: Note,
+pub struct Auth {
+    pub username: String,
 }
 
 /// A chat message
@@ -77,6 +78,12 @@ impl fmt::Display for ClientMsg {
 impl ClientMsg {
     pub fn to_ws_msg(&self) -> Message {
         Message::text(self.to_string())
+    }
+}
+
+impl Auth {
+    pub fn new(username: String) -> Self {
+        Self { username }
     }
 }
 
